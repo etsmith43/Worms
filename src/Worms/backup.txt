@@ -1,0 +1,469 @@
+package Worms;
+
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.image.*;
+import javax.swing.JPanel;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Random;
+import java.lang.Math;
+
+public class WormsGUI extends JPanel implements ActionListener, KeyListener, Runnable
+{
+	//private Timer time = new Timer(5, this);
+	static private int width = 1080;
+	static private int height = 720;
+	private int pixelSize = 4;
+	private float gravity = 0.2f;
+	private float pi = 3.14159f;
+	
+	private boolean running;
+	private Thread thread;
+	private BufferedImage img;
+	private Graphics2D g;
+	
+	private int FPS = 60;
+	private double averageFPS;
+	
+	List<PhysicsObject> objects = new ArrayList<PhysicsObject>();
+	char[][] map = new char[width][height];
+	
+	public WormsGUI()
+	{
+		super();
+		setPreferredSize(new Dimension(width,height));
+		setFocusable(true);
+		requestFocus();
+		setBackground(Color.BLACK);
+		createMap();
+	}
+	
+	public void addNotify()
+	{
+		super.addNotify();
+		if(thread == null)
+		{
+			thread = new Thread(this);
+			thread.start();
+		}
+		addKeyListener(this);
+	}
+	
+	public void run()
+	{
+		running = true;
+		
+		img = new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);
+		g = (Graphics2D) img.getGraphics();
+		
+		long startTime;
+		long millisTime;
+		long waitTime;
+		long totalTime = 0;
+		
+		int frameCount = 0;
+		int maxFrameCount = 60;
+		
+		long targetTime = 1000 / FPS;
+		
+		while(running)
+		{
+			startTime = System.nanoTime();
+			
+			gameUpdate();
+			gameRender();
+			gameDraw();
+			
+			millisTime = (System.nanoTime() - startTime) / 1000000;
+			waitTime = targetTime - millisTime;
+			
+			if(waitTime > 0)
+			{
+				try
+				{
+					thread.sleep(waitTime);
+				}
+				catch(InterruptedException e)
+				{
+					e.printStackTrace();
+				}
+			}
+			
+			totalTime += System.nanoTime() - startTime;
+			frameCount++;
+			if(frameCount == maxFrameCount)
+			{
+				averageFPS = 1000.0 / (((double)totalTime / frameCount) / 1000000);
+				frameCount = 0;
+				totalTime = 0;
+			}
+		}
+		
+	}
+	
+	private void gameUpdate()
+	{
+		
+	}
+	
+	private void gameRender()
+	{
+		redrawMap(g);
+		g.setColor(Color.BLACK);
+		g.drawString("FPS: " + averageFPS,10,10);
+		
+		//Update physics for all objects
+		for(PhysicsObject obj : objects)
+		{
+			boolean collision = false;
+			float radius = obj.getRadius();
+			
+			//Apply gravity
+			obj.setAcc(0.0f,gravity);
+			
+			//Update velocity
+			float velX = obj.getvelX() + obj.getaccX();
+			float velY = obj.getvelY() + obj.getaccY();
+			obj.setVel(velX, velY);
+
+			//Update position
+			float potentialposX = obj.getposX() + obj.getvelX();
+			float potentialposY = obj.getposY() + obj.getvelY();
+
+			//Reset Accel
+			obj.setAcc(0.0f,0.0f);
+			obj.setStable(false);		
+			
+			//Check for collision, first get the angle with respect to both velocities
+			float angle = (float) Math.atan2((double) velY,(double) velX);
+			float responseX = 0.0f;
+			float responseY = 0.0f;
+			obj.draw(g);
+			obj.setAngle(angle);
+			
+			//Calculate points around object to check for collision (unit circle)
+			//pi/2 because only need to check half
+			//pi/8 to make 8 points on the circle
+			for(float r = angle - pi / 2.0f; r < angle + pi / 2.0f; r += pi / 8.0f)
+			{
+				//Get the points around the circle
+				float cirPointsX = radius * (float)Math.cos(r) + potentialposX;
+				float cirPointsY = radius * (float)Math.sin(r) + potentialposY;
+				
+				g.setColor(Color.WHITE);
+				g.drawLine((int)cirPointsX,(int)cirPointsY,(int)cirPointsX,(int)cirPointsY);
+				
+				//Don't get points out of bounds
+				if (cirPointsX >= width) cirPointsX = width - 1;
+				if (cirPointsY >= height) cirPointsY = height - 1;
+				if (cirPointsX < 0) cirPointsX = 0;
+				if (cirPointsY < 0) cirPointsY = 0;
+				
+				//Check the position for ground collision
+				if (map[(int)cirPointsX][(int)cirPointsY] != 0)
+				{
+					responseX += potentialposX - cirPointsX;
+					responseY += potentialposY - cirPointsY;
+					collision = true;
+				}
+			}
+			
+			//Add up all the response points
+			float sqrtThis = responseX*responseX + responseY*responseY;
+			float magResponse = (float) Math.sqrt((double) sqrtThis);
+			
+			sqrtThis = velX*velX + velY*velY;
+			float velMag = (float) Math.sqrt((double) sqrtThis);
+			
+			if(collision)
+			{
+				//System.out.println("angle: " + angle);
+				obj.setStable(true);
+				
+				//Calculating response angle (reflection equation)
+				float dot = velX * (responseX / magResponse) + velY * (responseY / magResponse);
+				velX = obj.getFriction() * (-2.0f * dot * (responseX / magResponse) + velX);
+				velY = obj.getFriction() * (-2.0f * dot * (responseY / magResponse) + velY);
+				
+				obj.setVel(velX, velY);
+			}
+			else
+			{
+				//posX = potentialposX;
+				//posY = potentialposX;
+				obj.setPos(potentialposX, potentialposY);
+				//Delete objects off the screen
+				//if (posX >= width) objects.remove(obj);
+				//if (posY >= height) objects.remove(obj);
+				//if (posX < 0) objects.remove(obj);
+				//if (posY < 0) objects.remove(obj);
+			}
+			//System.out.println("velMag: " + velMag);
+ 			if(velMag < 0.2f)
+			{
+				obj.setVel(0.0f, 0.0f);
+				obj.setStable(true);
+			} 
+		}
+	}
+	
+	private void gameDraw()
+	{
+		Graphics g2 = this.getGraphics();
+		g2.drawImage(img,0,0,null);
+		g2.dispose();
+	}
+	
+/* 	public static void main(String[] args)
+	{
+		WormsGUI p = new WormsGUI();
+		JFrame jf = new JFrame();
+		jf.setTitle("Worms");
+		jf.setSize(width+17,height+40);
+		jf.setVisible(true);
+		jf.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		jf.add(p);
+		jf.addKeyListener(p);
+	} */
+	
+	/* public void paintComponent(Graphics g)
+	{
+		super.paintComponent(g);
+		time.start();
+		float posX;
+		float posY;
+		redrawMap(g);
+		
+		//Update physics for all objects
+		for(PhysicsObject obj : objects)
+		{
+			boolean collision = false;
+			float radius = obj.getRadius();
+			
+			//Apply gravity
+			obj.setAcc(0.0f,gravity);
+			
+			//Update velocity
+			float velX = obj.getvelX() + obj.getaccX();
+			float velY = obj.getvelY() + obj.getaccY();
+			obj.setVel(velX, velY);
+
+			//Update position
+			float potentialposX = obj.getposX() + obj.getvelX();
+			float potentialposY = obj.getposY() + obj.getvelY();
+
+			//Reset Accel
+			obj.setAcc(0.0f,0.0f);
+			obj.setStable(false);		
+			
+			//Check for collision, first get the angle with respect to both velocities
+			float angle = (float) Math.atan2((double) velY,(double) velX);
+			float responseX = 0.0f;
+			float responseY = 0.0f;
+			obj.draw(g);
+			obj.setAngle(angle);
+			
+			//Calculate points around object to check for collision (unit circle)
+			//pi/2 because only need to check half
+			//pi/8 to make 8 points on the circle
+			for(float r = angle - pi / 2.0f; r < angle + pi / 2.0f; r += pi / 8.0f)
+			{
+				//Get the points around the circle
+				float cirPointsX = radius * (float)Math.cos(r) + potentialposX;
+				float cirPointsY = radius * (float)Math.sin(r) + potentialposY;
+				
+				g.setColor(Color.WHITE);
+				g.drawLine((int)cirPointsX,(int)cirPointsY,(int)cirPointsX,(int)cirPointsY);
+				
+				//Don't get points out of bounds
+				if (cirPointsX >= width) cirPointsX = width - 1;
+				if (cirPointsY >= height) cirPointsY = height - 1;
+				if (cirPointsX < 0) cirPointsX = 0;
+				if (cirPointsY < 0) cirPointsY = 0;
+				
+				//Check the position for ground collision
+				if (map[(int)cirPointsX][(int)cirPointsY] != 0)
+				{
+					responseX += potentialposX - cirPointsX;
+					responseY += potentialposY - cirPointsY;
+					collision = true;
+				}
+			}
+			
+			//Add up all the response points
+			float sqrtThis = responseX*responseX + responseY*responseY;
+			float magResponse = (float) Math.sqrt((double) sqrtThis);
+			
+			sqrtThis = velX*velX + velY*velY;
+			float velMag = (float) Math.sqrt((double) sqrtThis);
+			
+			if(collision)
+			{
+				//System.out.println("angle: " + angle);
+				obj.setStable(true);
+				
+				//Calculating response angle (reflection equation)
+				float dot = velX * (responseX / magResponse) + velY * (responseY / magResponse);
+				velX = obj.getFriction() * (-2.0f * dot * (responseX / magResponse) + velX);
+				velY = obj.getFriction() * (-2.0f * dot * (responseY / magResponse) + velY);
+				
+				obj.setVel(velX, velY);
+			}
+			else
+			{
+				posX = potentialposX;
+				posY = potentialposX;
+				obj.setPos(potentialposX, potentialposY);
+				//Delete objects off the screen
+				//if (posX >= width) objects.remove(obj);
+				//if (posY >= height) objects.remove(obj);
+				//if (posX < 0) objects.remove(obj);
+				//if (posY < 0) objects.remove(obj);
+			}
+			//System.out.println("velMag: " + velMag);
+ 			if(velMag < 0.021f)
+			{
+				obj.setVel(0.0f, 0.0f);
+				obj.setStable(true);
+			} 
+		}
+	} */
+	
+	public void createMap()
+	{
+		float[] seed = new float[width];
+		float[] surface = new float[width];
+		int interations = 6;
+		float smoothness = 2.0f; //Higher is more smooth
+		Random rand = new Random();
+		
+		//fill the array with random noise
+		for(int i = 0; i < width; i++)
+			seed[i] = rand.nextFloat();
+		
+		//set to 0.5 so the map starts in the middle of the screen and not at the top
+		seed[0] = 0.5f;
+		surface = PerlinNoise1D(width, seed, interations, smoothness);
+		//1 for surface 
+		//0 for sky
+ 		for(int i = 0; i < width; i++)
+		{
+			for(int j = 0; j < height; j++)
+			{
+				if(j >= surface[i] * height)
+				{
+					map[i][j] = 1;
+				}
+				else
+					map[i][j] = 0;
+			}
+		}
+		System.out.println("done making map");
+	}
+	
+	public void redrawMap(Graphics g)
+	{
+		Color green = new Color(0,128,0);
+		for(int i = 0; i < width; i += pixelSize)
+		{
+			for(int j = 0; j < height; j += pixelSize)
+			{
+				//If map is sky then set its color to cyan else make it ground
+				if(map[i][j] == 0)
+				{
+					g.setColor(Color.CYAN);
+					g.fillRect(i,j,pixelSize,pixelSize);
+				}
+				else
+				{
+					g.setColor(green);
+					g.fillRect(i,j,pixelSize,pixelSize);
+				}
+			}
+		}
+	}
+	
+ 	public void actionPerformed(ActionEvent evt) 
+	{
+		repaint();
+	} 
+	
+ 	public float[] PerlinNoise1D(int nCount, float[] fSeed, int nOctaves, float fBias)
+	{
+		// Used 1D Perlin Noise
+		float[] fOutput = new float[width];
+		for (int x = 0; x < nCount; x++)
+		{
+			float fNoise = 0.0f;
+			float fScaleAcc = 0.0f;
+			float fScale = 1.0f;
+
+			for (int o = 0; o < nOctaves; o++)
+			{
+				int nPitch = nCount >> o;
+				int nSample1 = (x / nPitch) * nPitch;
+				int nSample2 = (nSample1 + nPitch) % nCount;
+
+				float fBlend = (float)(x - nSample1) / (float)nPitch;
+
+				float fSample = (1.0f - fBlend) * fSeed[nSample1] + fBlend * fSeed[nSample2];
+
+				fScaleAcc += fScale;
+				fNoise += fSample * fScale;
+				fScale = fScale / fBias;
+			}
+
+			// Scale to seed range
+			fOutput[x] = fNoise / fScaleAcc;
+		}
+		return fOutput;
+	}
+	
+	public void keyReleased(KeyEvent k)
+	{
+		//if (k.getKeyCode() == KeyEvent.VK_S || k.getKeyCode() == KeyEvent.VK_W)
+		//else if(k.getKeyCode() == KeyEvent.VK_UP || k.getKeyCode() == KeyEvent.VK_DOWN)
+	}
+	
+	public void keyPressed(KeyEvent k)
+	{
+		if (k.getKeyCode() == KeyEvent.VK_S)
+		{
+
+		}
+		else if (k.getKeyCode() == KeyEvent.VK_W)
+		{
+
+		}
+		else if (k.getKeyCode() == KeyEvent.VK_DOWN)
+		{
+			float mouseX = (float)MouseInfo.getPointerInfo().getLocation().getX();
+			float mouseY = (float)MouseInfo.getPointerInfo().getLocation().getY();
+			System.out.println("mouseX: " + mouseX);
+			System.out.println("mouseY: " + mouseY);
+			System.out.println("-------------");
+			
+			for(int i = 0; i < 20; i++)
+			{
+				Debris debris = new Debris(mouseX,mouseY);
+				objects.add(debris);
+			}
+		}
+		if (k.getKeyCode() == KeyEvent.VK_UP)
+		{
+			createMap();
+		}
+		if (k.getKeyCode() == KeyEvent.VK_SPACE)
+		{
+			float mouseX = (float)MouseInfo.getPointerInfo().getLocation().getX();
+			float mouseY = (float)MouseInfo.getPointerInfo().getLocation().getY();
+			System.out.println("mouseX: " + mouseX);
+			System.out.println("mouseY: " + mouseY);
+			System.out.println("-------------");
+			Worm worm = new Worm(mouseX,mouseY);
+			objects.add(worm);
+		}
+	}
+	public void keyTyped(KeyEvent k) {}
+}
